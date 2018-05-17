@@ -522,7 +522,7 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
       }
     }
 
-    /*for (int g = 0; g < group_; ++g) {
+    for (int g = 0; g < group_; ++g) {
       this->gemm_timer_.Start();  // timer
       caffe_cpu_sparse_mmcsr(conv_out_channels_ / group_,
 				  conv_out_spatial_dim_,
@@ -536,7 +536,7 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 				  (Dtype)0.,output + output_offset_ * g);
       this->gemm_timer_.Stop();  // timer
       this->total_gemm_time_ += this->gemm_timer_.MicroSeconds();
-    }*/
+    }
   } else {
     // normal dense gemm
     if (!is_1x1_) {
