@@ -60,6 +60,7 @@ class BaseConvolutionLayer : public Layer<Dtype> {
       const vector<Blob<Dtype>*>& top);
   virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);
+  virtual void WeightAlign();
 
   virtual inline int MinBottomBlobs() const { return 1; }
   virtual inline int MinTopBlobs() const { return 1; }
@@ -68,7 +69,7 @@ class BaseConvolutionLayer : public Layer<Dtype> {
 #endif
  protected:
   // Split Reshape into two parts
-  // Part 1 for normal blob reshape 
+  // Part 1 for normal blob reshape
   // Part 2 for openmp optimization for CAFFE engine (only)
   void DoReshape(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);
@@ -167,6 +168,23 @@ class BaseConvolutionLayer : public Layer<Dtype> {
           pad_.cpu_data(), stride_.cpu_data(), dilation_.cpu_data(), col_buff);
     }
   }
+  inline void conv_squeezed_im2col_cpu(const Dtype* data, Dtype* col_buff,
+                                       const int* all_zero_mask) {
+    if (!force_nd_im2col_ && num_spatial_axes_ == 2) {
+      squeezed_im2col_cpu(data, conv_in_channels_,
+          conv_input_shape_.cpu_data()[1], conv_input_shape_.cpu_data()[2],
+          kernel_shape_.cpu_data()[0], kernel_shape_.cpu_data()[1],
+          pad_.cpu_data()[0], pad_.cpu_data()[1],
+          stride_.cpu_data()[0], stride_.cpu_data()[1],
+          dilation_.cpu_data()[0], dilation_.cpu_data()[1], col_buff,
+          all_zero_mask);
+    } else {
+      // won't work for this code path
+      im2col_nd_cpu(data, num_spatial_axes_, conv_input_shape_.cpu_data(),
+          col_buffer_shape_.data(), kernel_shape_.cpu_data(),
+          pad_.cpu_data(), stride_.cpu_data(), dilation_.cpu_data(), col_buff);
+    }
+  }
   inline void conv_col2im_cpu(const Dtype* col_buff, Dtype* data) {
     if (!force_nd_im2col_ && num_spatial_axes_ == 2) {
       col2im_cpu(col_buff, conv_in_channels_,
@@ -237,6 +255,21 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   size_t weight_diff_mt_size;  // openmp
   std::vector<Dtype> col_buffer_mt_;   //  openmp
   std::vector<Dtype> weight_diff_mt_;  // openmp
+
+  Blob<int> col_buf_mask_;
+  Blob<int> row_buf_mask_;
+  Blob<int> col_mapping_;
+  Blob<int> row_mapping_;
+  vector<int> left_columns_;//the number of left columns of weight matrix for each group
+  vector<int> left_rows_;//the number of left rows of weight matrix for each group
+  Blob<Dtype> squeezed_weight_buffer_;
+  Blob<Dtype> output_buffer_;
+
+  Blob<Dtype> nz_weight_values_;//nonzero elements
+  Blob<int> nz_weight_indices_;//index of nonzero
+  Blob<int> nz_weight_index_pointers_;//pointer(index) of indices
+  Blob<int> nz_per_row_;//nonzero per row for cusparse
+  vector<int> nz_num_;//the number of nonzero for cusparse
 };
 
 }  // namespace caffe

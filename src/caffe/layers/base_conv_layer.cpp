@@ -50,6 +50,133 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace caffe {
 
 template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::WeightAlign(){
+	CHECK_EQ(this->blobs_[0]->num_axes(),4);//caffe now supports any dimension
+	//is_sparse_format_weights_ = false;
+	const LayerParameter& layerparam = this->layer_param();
+  int zero_num = 0;
+  const Dtype* weights = this->blobs_[0]->cpu_data();
+  for (int i = 0; i < this->blobs_[0]->count(); i++) {
+    if (weights[i] == Dtype(0)) zero_num++;
+  }
+  Dtype sparsity = (Dtype)zero_num / (Dtype)this->blobs_[0]->count();
+	LOG(INFO)<<"layer\t"<<layerparam.name()<<"\t"<<"has sparsity of "<< sparsity;
+
+	ConvolutionParameter conv_param = this->layer_param_.convolution_param();
+	const int M = this->blobs_[0]->shape(0)/group_;
+	const int N = this->blobs_[0]->count(1,4);
+	const int weight_offset = this->blobs_[0]->count()/group_;
+	const int row_offset = this->blobs_[0]->shape(0)/group_ + 1;
+	int left_cols = 0;
+	int left_rows = 0;
+	switch(conv_param.conv_mode()){
+		case caffe::ConvolutionParameter_ConvMode_LOWERED_CSRMM:
+			LOG(INFO)<<"ConvolutionParameter_ConvMode_LOWERED_CSRMM";
+			for (int g = 0; g < group_; ++g) {
+				switch (Caffe::mode()) {
+				    case Caffe::CPU:
+				    	caffe_cpu_sparse_dense2csr(M, N,
+								this->blobs_[0]->mutable_cpu_data() + weight_offset * g,
+								nz_weight_values_.mutable_cpu_data()+ weight_offset * g,
+								nz_weight_indices_.mutable_cpu_data()+ weight_offset * g,
+								nz_weight_index_pointers_.mutable_cpu_data() + row_offset * g);
+				      break;
+				    case Caffe::GPU:{
+				#ifndef CPU_ONLY
+				    	int total_nonzero = 0;
+				    	caffe_gpu_sparse_dense2csr(M, N,
+				    			this->blobs_[0]->gpu_data() + weight_offset * g,
+				    			nz_per_row_.mutable_gpu_data() + M*g,
+							    nz_weight_values_.mutable_gpu_data()+ weight_offset * g,
+							    nz_weight_index_pointers_.mutable_gpu_data() + row_offset * g,
+							    nz_weight_indices_.mutable_gpu_data()+ weight_offset * g,
+							    &total_nonzero);
+				    	nz_num_[g] = total_nonzero;
+				#else
+				      NO_GPU;
+				#endif
+				      break;
+				    }
+				}
+
+			}
+			break;
+		case caffe::ConvolutionParameter_ConvMode_LOWERED_CCNMM:{
+			//is_concatenating_weights_features_ = true;
+			LOG(INFO)<<"ConvolutionParameter_ConvMode_LOWERED_CCNMM";
+
+			//analyze column sparsity
+			for (int g = 0; g < group_; ++g) {
+				caffe_cpu_if_all_zero(this->blobs_[0]->shape(0)/group_,
+						this->blobs_[0]->count(1,4),
+						this->blobs_[0]->cpu_data() + this->blobs_[0]->count()/group_ * g,
+						col_buf_mask_.mutable_cpu_data() + this->blobs_[0]->count(1,4) * g);
+			}
+			//analyze row sparsity
+			caffe_cpu_if_all_zero(this->blobs_[0]->shape(0),
+									this->blobs_[0]->count(1,4),
+									this->blobs_[0]->cpu_data(),
+									row_buf_mask_.mutable_cpu_data(),
+									false);
+      // get column mapping
+      int col_counter = 0;
+      for (int i = 0; i < col_buf_mask_.count(); i++) {
+        if (!col_buf_mask_.cpu_data()[i]) {
+          col_mapping_.mutable_cpu_data()[i] = col_counter;
+          col_counter++;
+        } else {
+          col_mapping_.mutable_cpu_data()[i] = -1;
+        }
+      }
+      // get row mapping
+      int row_counter = 0;
+      for (int i = 0; i < row_buf_mask_.count(); i++) {
+        if (!row_buf_mask_.cpu_data()[i]) {
+          row_mapping_.mutable_cpu_data()[i] = row_counter;
+          row_counter++;
+        } else {
+          row_mapping_.mutable_cpu_data()[i] = -1;
+        }
+      }
+
+			// concatenating weight matrix
+			left_columns_.erase(left_columns_.begin(),left_columns_.end());
+			left_rows_.erase(left_rows_.begin(),left_rows_.end());
+			LOG(INFO)<<"concatenating weight matrix";
+			int total_weights = 0;
+			for (int g = 0; g < group_; ++g) {
+				left_cols = kernel_dim_ - caffe_cpu_asum( kernel_dim_, col_buf_mask_.cpu_data()+ kernel_dim_ * g);
+				left_columns_.push_back(left_cols);
+				left_rows = conv_out_channels_ /group_ - caffe_cpu_asum( conv_out_channels_ /group_, row_buf_mask_.cpu_data()+ conv_out_channels_ /group_ * g);
+				left_rows_.push_back(left_rows);
+				total_weights += left_cols*left_rows;
+				LOG(INFO)<<layerparam.name()<<" left_cols="<<left_cols<<" left_rows="<<left_rows;
+			}
+			squeezed_weight_buffer_.Reshape(1,1,1,total_weights);
+			LOG(INFO)<<"squeezing weight matrix";
+			int weight_offset_sum = 0;
+			for (int g = 0; g < group_; ++g) {
+				LOG(INFO)<<layerparam.name()<<" squeezing to "<<left_rows_[g]<<"x"<<left_columns_[g];
+				caffe_cpu_concatenate_rows_cols(
+						conv_out_channels_ /group_,
+						kernel_dim_,
+						this->blobs_[0]->cpu_data() + weight_offset_ * g,
+						squeezed_weight_buffer_.mutable_cpu_data() + weight_offset_sum,
+						col_buf_mask_.cpu_data()+ kernel_dim_ * g,
+						row_buf_mask_.cpu_data()+ conv_out_channels_ /group_ * g
+						);
+				weight_offset_sum += left_rows_[g]*left_columns_[g];
+			}
+			LOG(INFO)<<"weight matrix squeezed";
+			break;
+		}
+		default:
+			LOG(INFO)<<"ConvolutionParameter ConvMode: DEFAULT";
+			break;
+	}
+}
+
+template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
   // Configure the kernel size, padding, stride, and inputs.
@@ -282,6 +409,21 @@ void BaseConvolutionLayer<Dtype>::DoReshape(const vector<Blob<Dtype>*>& bottom,
     }
   }
   col_buffer_.Reshape(col_buffer_shape_);
+
+  output_buffer_.Reshape(1,1,conv_out_channels_, conv_out_spatial_dim_);
+  if(!reverse_dimensions()){
+	  col_buf_mask_.Reshape(1,1,1,kernel_dim_*group_);
+	  row_buf_mask_.Reshape(1,1,1,conv_out_channels_);
+    col_mapping_.Reshape(1,1,1,kernel_dim_*group_);
+	  row_mapping_.Reshape(1,1,1,conv_out_channels_);
+
+    nz_weight_values_.Reshape(1, 1, 1, this->blobs_[0]->count());//nonzero elements
+	  nz_weight_indices_.Reshape(1,1,1,nz_weight_values_.count());//index of nonzero
+	  nz_weight_index_pointers_.Reshape(1,1,1,this->blobs_[0]->shape(0)+group_);//pointer(index) of indices
+	  nz_per_row_.Reshape(1,1,1,this->blobs_[0]->shape(0));
+	  nz_num_.resize(group_);
+  }
+
   bottom_dim_ = bottom[0]->count(channel_axis_);
   top_dim_ = top[0]->count(channel_axis_);
   num_kernels_im2col_ = conv_in_channels_ * conv_out_spatial_dim_;
@@ -342,18 +484,77 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
   size_t col_data_buffer_size = col_buffer_mt_.size()/num_of_threads_;
 
   Dtype* col_buff = const_cast<Dtype*>(input);
-  if (!is_1x1_) {
-    col_buff = & col_buffer_mt_[ tid* col_data_buffer_size];
-    if (!skip_im2col) {
-      conv_im2col_cpu(input, col_buff);
-    }
-  }
 
-  for (int g = 0; g < group_; ++g) {
-    caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
-        group_, conv_out_spatial_dim_, kernel_dim_,
-        (Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
-        (Dtype)0., output + output_offset_ * g);
+  if (this->layer_param_.convolution_param().conv_mode() == ConvolutionParameter_ConvMode_LOWERED_CCNMM) {
+    col_buff = & col_buffer_mt_[ tid* col_data_buffer_size];
+    conv_squeezed_im2col_cpu(input, col_buff, col_buf_mask_.cpu_data());
+
+    int col_buf_offset_sum = 0;
+    int output_offset_sum = 0;
+    int weight_offset_sum = 0;
+    const Dtype* squeezed_weight_buffer = squeezed_weight_buffer_.cpu_data();
+
+    for (int g = 0; g < group_; ++g) {
+      int left_cols = left_columns_[g];
+      int left_rows = left_rows_[g];
+
+      this->gemm_timer_.Start();  // timer
+      caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans,
+          left_rows, conv_out_spatial_dim_, left_cols,
+          (Dtype)1., squeezed_weight_buffer + weight_offset_sum,
+          col_buff + col_buf_offset_sum,
+          (Dtype)0., output + output_offset_sum);
+      this->gemm_timer_.Stop();  // timer
+      this->total_gemm_time_ += this->gemm_timer_.MicroSeconds();
+
+      col_buf_offset_sum += left_cols * conv_out_spatial_dim_;
+      output_offset_sum += left_rows * conv_out_spatial_dim_;
+      weight_offset_sum += left_rows * left_cols;
+    }
+    // dispatch rows
+    caffe_cpu_dispatch_rows(conv_out_channels_, conv_out_spatial_dim_,
+                            output, row_buf_mask_.cpu_data());
+  } else if (this->layer_param_.convolution_param().conv_mode() == ConvolutionParameter_ConvMode_LOWERED_CSRMM) {
+    if (!is_1x1_) {
+      col_buff = & col_buffer_mt_[ tid* col_data_buffer_size];
+      if (!skip_im2col) {
+        conv_im2col_cpu(input, col_buff);
+      }
+    }
+
+    /*for (int g = 0; g < group_; ++g) {
+      this->gemm_timer_.Start();  // timer
+      caffe_cpu_sparse_mmcsr(conv_out_channels_ / group_,
+				  conv_out_spatial_dim_,
+				  kernel_dim_,
+				  (Dtype)1.,
+				  nz_weight_values_.cpu_data()+ weight_offset_ * g,
+				  nz_weight_indices_.cpu_data()+ weight_offset_ * g,
+				  nz_weight_index_pointers_.cpu_data() + (conv_out_channels_ / group_ + 1) * g,
+				  nz_weight_index_pointers_.cpu_data() + (conv_out_channels_ / group_ + 1) * g + 1,
+				  col_buff + col_offset_ * g,
+				  (Dtype)0.,output + output_offset_ * g);
+      this->gemm_timer_.Stop();  // timer
+      this->total_gemm_time_ += this->gemm_timer_.MicroSeconds();
+    }*/
+  } else {
+    // normal dense gemm
+    if (!is_1x1_) {
+      col_buff = & col_buffer_mt_[ tid* col_data_buffer_size];
+      if (!skip_im2col) {
+        conv_im2col_cpu(input, col_buff);
+      }
+    }
+
+    for (int g = 0; g < group_; ++g) {
+      this->gemm_timer_.Start();  // timer
+      caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
+          group_, conv_out_spatial_dim_, kernel_dim_,
+          (Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
+          (Dtype)0., output + output_offset_ * g);
+      this->gemm_timer_.Stop();  // timer
+      this->total_gemm_time_ += this->gemm_timer_.MicroSeconds();
+    }
   }
 }
 

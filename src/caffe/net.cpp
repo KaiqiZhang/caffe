@@ -237,13 +237,13 @@ void Net<Dtype>::Init(const NetParameter& in_param) {
         param.mutable_layer(layer_id)->set_engine(param.engine());
       }
       else {
-        if ((!param.layer(layer_id).engine().compare("MKL2017") && !param.engine().compare("MKLDNN")) 
+        if ((!param.layer(layer_id).engine().compare("MKL2017") && !param.engine().compare("MKLDNN"))
            || (!param.layer(layer_id).engine().compare("MKLDNN") && !param.engine().compare("MKL2017"))) {
           param.mutable_layer(layer_id)->set_engine(param.engine());
         }
       }
     }
-    
+
     if (layer_param.propagate_down_size() > 0) {
       CHECK_EQ(layer_param.propagate_down_size(),
           layer_param.bottom_size())
@@ -873,7 +873,7 @@ void Net<Dtype>::CompilationRuleConvSumFusion(const NetParameter& param,
   for (int i = 0; i < param.layer_size(); i++) {
     LayerParameter* layer_param =
         (const_cast<NetParameter&>(param)).mutable_layer(i);
-    if (layer_param->type().compare("Convolution") == 0 
+    if (layer_param->type().compare("Convolution") == 0
         && (layer_param->has_engine() == false
         || (layer_param->has_engine() == true
         && layer_param->engine().compare("MKLDNN") ==0))) {
@@ -952,7 +952,7 @@ void Net<Dtype>::CompilationRuleSparse(const NetParameter& param,
   std::map<int, int> conv_layer_id_stride;  // saves the conv layer's id which
                                             // need to modify its stride;
   std::map<int, string> pooling_layer_id_top_blob;
-  
+
   // step 1 get topology details, such as layer name/id mapping
   for (int index = 0; index < param.layer_size(); index++) {
     layer_param = (const_cast<NetParameter&>(param)).mutable_layer(index);
@@ -975,7 +975,7 @@ void Net<Dtype>::CompilationRuleSparse(const NetParameter& param,
         layer_param->convolution_param().kernel_size_size() > 0 &&
         layer_param->convolution_param().stride_size() > 0) {
       conv_layer_id_mapping[layer_param->name()] = index;
-      
+
       if (layer_param->convolution_param().kernel_size(0) > 1) {
         potential_sparse_layer = layer_param;
       } else if (layer_param->convolution_param().kernel_size(0) == 1 &&
@@ -1248,9 +1248,9 @@ void Net<Dtype>::GetNeedToCancelInplaceLayers(
     vector<string>& each_blob_list, const NetParameter& param) {
   if (param.engine().compare("MKLDNN") != 0 || each_blob_list.size() == 1)
     return;
-  
+
   layer_pairs.clear();
-  
+
   vector<const LayerParameter*> each_layer_pair;
 
   each_blob_list.erase(each_blob_list.begin());
@@ -1394,7 +1394,7 @@ vector<Dtype> Net<Dtype>::FindMax(Blob<Dtype>* blob, bool is_single) {
       }
     }
   }
-  
+
   return max_vals;
 }
 
@@ -1424,7 +1424,7 @@ void Net<Dtype>::RangeInLayers(vector<string>* layer_name,
   for (int layer_id = 0; layer_id < layers_.size(); ++layer_id) {
     if (strcmp(layers_[layer_id]->type(), "Convolution") == 0) {
       max_vals = FindMax(bottom_vecs_[layer_id][0]);
-      max_in->at(index) = std::max(max_in->at(index), max_vals.at(0)); 
+      max_in->at(index) = std::max(max_in->at(index), max_vals.at(0));
 
       max_vals = FindMax(top_vecs_[layer_id][0]);
       max_out->at(index) = std::max(max_out->at(index), max_vals.at(0));
@@ -1435,7 +1435,7 @@ void Net<Dtype>::RangeInLayers(vector<string>* layer_name,
         max_param->at(index).at(0) = std::max(max_param->at(index).at(0), max_vals.at(0));
       } else {
         max_vals = FindMax(&(*layers_[layer_id]->blobs()[0]), false);
-        for(int i = 0; i < max_vals.size(); ++i) 
+        for(int i = 0; i < max_vals.size(); ++i)
           max_param->at(index).at(i) = std::max(max_param->at(index).at(i), max_vals.at(i));
       }
       index++;
@@ -1902,6 +1902,8 @@ void Net<Dtype>::CopyTrainedLayersFrom(const NetParameter& param_inp) {
       const bool kReshape = false;
       target_blobs[j]->FromProto(source_layer.blobs(j), kReshape);
     }
+    //LOG(INFO) << "Aligning Weights";
+    layers_[target_layer_id]->WeightAlign();
   }
 }
 
@@ -2479,7 +2481,7 @@ void Net<Dtype>::SaveTimeline() {
         << std::endl;
   }
 
-#if defined(USE_MLSL) && defined(FW_OVERLAP_OPT) 
+#if defined(USE_MLSL) && defined(FW_OVERLAP_OPT)
   for (int layer_idx = 0; layer_idx < layers().size(); ++layer_idx) {
     if (first_update_start_time_per_layer[layer_idx] == 0
         || first_update_stop_time_per_layer[layer_idx] == 0)
@@ -2585,7 +2587,7 @@ INSTANTIATE_CLASS(Net);
 
 #if defined(FOUNDED_MLSL_ROOT)
 #define DEF_MLSL(str) \
-const char *mlsl_root = #str; 
+const char *mlsl_root = #str;
 
 __attribute__((constructor)) void lib_ctor()  {
     DEF_MLSL(FOUNDED_MLSL_ROOT);

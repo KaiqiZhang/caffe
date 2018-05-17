@@ -182,6 +182,33 @@ DEFINE_CAFFE_CPU_UNARY_FUNC(fabs, y[i] = std::fabs(x[i]));
 template <typename Dtype>
 void caffe_cpu_scale(const long n, const Dtype alpha, const Dtype *x, Dtype* y);
 
+//get if columns(true)/rows(false) in matrix X are all zeros
+template <typename Dtype>
+void caffe_cpu_if_all_zero(const int M, const int N, const Dtype *X, int* y, bool dimen=true);
+
+//remove all zero rows and columns, and concatenate remaining ones together
+template <typename Dtype>
+void caffe_cpu_concatenate_rows_cols(const int M, const int N, const Dtype *x, Dtype *y, const int* col_mask, const int* row_mask);
+
+// sparse matrix A *  dense matrix B
+// A is stored in CSR format
+template <typename Dtype>
+void caffe_cpu_sparse_mmcsr(const int M, const int N, const int K,
+    const Dtype alpha,
+    const Dtype* A_nonzero_buf, const int* A_nonzero_idx_buf, const int* A_idx_pointerB_,const int* A_idx_pointerE_,
+    const Dtype* B,
+    const Dtype beta,Dtype* C);
+
+// dense matrix A to sparse matrix A in CSR format
+template <typename Dtype>
+void caffe_cpu_sparse_dense2csr(const int M, const int N,
+    Dtype* A,
+    Dtype* A_nonzero_buf, int* A_nonzero_idx_buf, int* A_idx_pointer_buf);
+
+//dispatch dense rows in x to scattered rows in itself according to row_mask, assuming x is MxN dimension
+template <typename Dtype>
+void caffe_cpu_dispatch_rows(const int M, const int N, Dtype *x, const int* row_mask);
+
 #ifndef CPU_ONLY  // GPU
 
 // Decaf gpu gemm provides an interface that is almost the same as the cpu

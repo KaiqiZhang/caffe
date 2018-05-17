@@ -218,7 +218,7 @@ message NetParameter {
 
   // DEPRECATED: use 'layer' instead.
   repeated V1LayerParameter layers = 2;
-  
+
   // Multinode settings
   optional MultinodeParameter multinode = 101;
 }
@@ -605,7 +605,7 @@ message LayerParameter {
   optional WindowDataParameter window_data_param = 129;
   optional SpatialDropoutParameter spatial_dropout_param = 155;
   optional string engine = 149 [default = ""];
-  
+
   optional MultinodeLayerParameter multinode = 150;
   optional MnActivationParameter mn_activation_param = 151;
   optional MnParamGradCompressParameter mn_grad_compress_param = 156;
@@ -1074,6 +1074,16 @@ message ConvolutionParameter {
   optional bool relu = 19 [default = false];
   optional float negative_slope = 20 [default = 0];
   optional string conv_algorithm = 21 [default = "direct"];
+
+  // the method of convolutional computation
+  enum ConvMode {
+    LOWERED_GEMM = 0;   //gemm on lowered tensors
+    LOWERED_CSRMM = 1;  //sparse weight matrix in CSR format * lowered feature maps
+    LOWERED_CCNMM = 2;  //removing all-zero rows & columns and ConCateNating remaining ones, then do gemm. GPU mode is implemented with partial CPU subroutines :(.
+    DIRECT_SCONV = 3;  //direct convolution on tensors without lowering, harnessing sparsity. More in intel branch
+    DIRECT_DCONV = 4;  //direct convolution on tensors without lowering, dense format. More in intel branch
+  }
+  optional ConvMode conv_mode = 22 [default = LOWERED_GEMM];
 }
 
 message CropParameter {
@@ -1643,7 +1653,7 @@ message PriorBoxParameter {
 }
 
 message PSROIPoolingParameter {
-   required float spatial_scale = 1; 
+   required float spatial_scale = 1;
    required int32 output_dim = 2; // output channel number
    required int32 group_size = 3; // number of groups to encode position-sensitive score maps
  }

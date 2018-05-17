@@ -47,6 +47,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "caffe/layer_factory.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/math_functions.hpp"
+#include "caffe/util/benchmark.hpp"
 
 #include "caffe/multinode/mlsl.hpp"
 
@@ -420,6 +421,14 @@ protected:
     param_propagate_down_[param_id] = value;
   }
 
+  virtual double TotalGemmTime() { return total_gemm_time_; }
+  virtual void ResetTotalGemmTime() { total_gemm_time_ = 0.0; }
+
+  /*
+   * typically for convolutional layers, to align nonzero weights together
+   * */
+  virtual void WeightAlign() {}
+
 
  protected:
   /** The protobuf that stores the layer parameters */
@@ -434,6 +443,9 @@ protected:
   /** The vector that indicates whether each top blob has a non-zero weight in
    *  the objective function. */
   vector<Dtype> loss_;
+
+  double total_gemm_time_;
+  Timer gemm_timer_;
 
   /** @brief Using the CPU device, compute the layer output. */
   virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,

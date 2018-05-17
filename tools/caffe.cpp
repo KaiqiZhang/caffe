@@ -468,6 +468,7 @@ int test() {
   // Instantiate the caffe net.
   Net<float> caffe_net(FLAGS_model, caffe::TEST, FLAGS_level, &stages, NULL,
                        FLAGS_engine);
+  const vector<shared_ptr<Layer<float> > >& layers = caffe_net.layers();
   caffe_net.CopyTrainedLayersFrom(FLAGS_weights);
   LOG(INFO) << "Running for " << FLAGS_iterations << " iterations.";
 
@@ -479,6 +480,17 @@ int test() {
   vector<int> test_score_output_id;
   vector<float> test_score;
   float loss = 0;
+  //------------------ warm up -------------------
+  LOG(INFO) << "Warm up: 100 iterations...";
+  for (int i = 0; i < 100; ++i) {
+    float iter_loss;
+    caffe_net.Forward(&iter_loss);
+  }
+  // reset timer
+  for (int i = 0; i < layers.size(); ++i) {
+    layers[i]->ResetTotalGemmTime();
+  }
+  //---------------- end warm up -----------------
   for (int i = 0; i < FLAGS_iterations; ++i) {
     float iter_loss;
     const vector<Blob<float>*>& result =
@@ -516,6 +528,22 @@ int test() {
     }
     LOG(INFO) << output_name << " = " << mean_score << loss_msg_stream.str();
   }
+
+  /*------------ print gemm time -------------*/
+  LOG(INFO) << "Average time per layer: ";
+  for (int i = 0; i < layers.size(); ++i) {
+    const caffe::string& layername = layers[i]->layer_param().name();
+    LOG(INFO) << std::setfill(' ') << std::setw(10) << layername <<
+      "\tGEMM: " << layers[i]->TotalGemmTime() / 1000 /
+      FLAGS_iterations << " ms.";
+  }
+
+  double total_gemm_time = 0.0;
+  for (int i = 0; i < layers.size(); ++i) {
+    total_gemm_time += layers[i]->TotalGemmTime() / 1000 / FLAGS_iterations;
+  }
+  LOG(INFO) << "Average GEMM pass: " << total_gemm_time << " ms.";
+  /*---------- end print gemm time -----------*/
 
   return 0;
 }
